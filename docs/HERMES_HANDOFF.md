@@ -6,6 +6,14 @@ Keep useful default content on the photo frame, swipe among cards, and let the H
 
 Repository: https://github.com/ianmabie/frameBot
 
+## Update: shared profiles and open LAN pushes
+
+Ian explicitly requested very open permissions: any LAN device should push without credentials. The gateway now admits token-free `POST /push` and `GET /status` from `192.168.1.0/24` and loopback. `/Users/Shared/HermesFrameClient/framectl.py` is readable/executable through Python from every local profile and defaults to the local gateway. For shell-e, use this shared path instead of Ian's private Library path. It contains no credentials. Do not run the old staged sudo installer.
+
+Remote Hermes on the home server can use the cloned CLI with `--url http://192.168.1.128:8765` or direct JSON POST, provided its source address is on the admitted LAN. Existing shell-e SSH can also run the shared client on the mini. For meal-plan updates, use stable menu/recipe card IDs and `focus:false` to preserve the current photo selection. See [LAN_PUSH.md](LAN_PUSH.md).
+
+Default token-authenticated behavior remains available for fresh installs; this existing service's private config explicitly enables public mode. Any admitted device can overwrite a card by ID. Frame reads and deletion remain authenticated. The service must remain running under Ian while profiles switch.
+
 ## First action on the existing Mac
 
 Run this using your shell tool:
@@ -14,7 +22,7 @@ Run this using your shell tool:
 /usr/bin/python3 -B "/Users/ian/Library/Application Support/HermesFrame/framectl.py" status
 ```
 
-The gateway should report `recently_connected: true`, a recent `last_poll`, and the current frame IP. The last observation was `192.168.1.34`, revision 3. IPs can change. If connected, you can immediately send content using this client. No USB, ADB, install, token generation, or router changes are needed for normal pushes.
+The gateway should report `recently_connected: true`, a recent `last_poll`, and the current frame IP. The latest observation after the LAN access change was `192.168.1.34`, revision 5. IPs can change. If connected, you can immediately send content using this client. No USB, ADB, install, token generation, or router changes are needed for normal pushes.
 
 Recommended tool contract:
 
@@ -64,7 +72,7 @@ The photo edit used the built-in image editor. Original and edited photos remain
 
 ## Hermes discovery status
 
-No `hermes` executable, `.hermes` directory, Hermes process, Spotlight match, or install in common Mac locations was found. No Hermes tool/skill was configured and no runtime was installed. The similarly named `HermesFrame` folder is this gateway, not the agent. If this handoff is being read by Hermes elsewhere, local push endpoints must be executed on `ian-mini-m6` as the owning user; remote writes to port 8765 are rejected by design. Use an existing authorized remote execution channel to this Mac, or design one with the user.
+No `hermes` executable, `.hermes` directory, Hermes process, Spotlight match, or install in common Mac locations was found. No Hermes tool/skill was configured and no runtime was installed. The similarly named `HermesFrame` folder is this gateway, not the agent. If this handoff is being read by Hermes elsewhere, local push endpoints must be executed on `ian-mini-m6` as the owning user; remote token-free pushes to port 8765 now work from the admitted LAN. Other networks require existing authorized remote execution on this Mac or a separately requested change to the admitted networks.
 
 ## Development sequence
 
@@ -76,14 +84,14 @@ No `hermes` executable, `.hermes` directory, Hermes process, Spotlight match, or
 6. Android changes require re-enabling wireless ADB: see WIRELESS_ACCESS.md. Keep original AiMOR/OTA installed, and preserve the tested Original photos escape path.
 7. Confirm frame behavior using a screenshot or the user when possible. Distinguish accepted/polled from rendered/seen.
 
-The initial repo snapshot includes a portable SDK/JDK build override, fresh-install credential initializer, and repeatable gateway redeploy support. Those source refinements were tested locally; the live gateway has not been redeployed merely to publish the repo. The installed app/gateway continue to serve the working deck.
+The initial repo snapshot includes a portable SDK/JDK build override, fresh-install credential initializer, and repeatable gateway redeploy support. Those source refinements were tested locally; the earlier publishing pass did not redeploy the gateway. The open-LAN change was subsequently deployed to the existing service while preserving its saved data and credentials. The installed app/gateway continue to serve the working deck.
 
 ## Known limitations
 
 - Landscape app layout; image cards fit within the existing header/footer rather than edge-to-edge.
 - The photo rotation has been pushed, but no post-reboot screenshot confirms appearance because ADB is closed.
 - Source URL can be changed on-device, but the read token is embedded in the APK.
-- HTTP bearer authentication on the LAN; no TLS, remote push support, render acknowledgements, or multi-user authorization.
+- HTTP on the LAN; no TLS or render acknowledgements. Public-push mode uses admitted source subnets, with no per-device identity; frame reads and deletion retain bearer authentication.
 - State response limit 2 MiB and fixed-size typography; avoid giant HTML decks/long titles.
 - Old image files and decoded bitmap lifetime need cleanup under sustained use on the ~1 GiB device.
 - The actual physical storage is about 15.75 GB despite the listing advertising 32 GB.

@@ -1,7 +1,7 @@
 import unittest,tempfile,json,threading,urllib.request,urllib.error,base64
 from pathlib import Path
 from http.server import ThreadingHTTPServer
-from gateway import Store,make_handler
+from gateway import Store,make_handler,public_push_allowed
 class GatewayTest(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.data=Path(self.tmp.name)
@@ -34,4 +34,28 @@ class GatewayTest(unittest.TestCase):
   path=self.store.state['cards'][-1]['image_path']
   req=urllib.request.Request(self.url+path,headers={'Authorization':'Bearer read'})
   with urllib.request.urlopen(req) as r:self.assertEqual(r.read(),data)
+class PublicPushTest(GatewayTest):
+ def setUp(self):
+  super().setUp()
+  self.store.config.update(public_push=True,public_push_networks=['127.0.0.0/8','192.168.1.0/24'])
+ def test_access_boundaries(self):
+  self.assertTrue(self.request('/push',payload={'id':'from_other_profile','title':'Hello'})['ok'])
+  self.assertEqual(self.request('/status')['revision'],1)
+  with self.assertRaises(urllib.error.HTTPError) as e:self.request('/state')
+  self.assertEqual(e.exception.code,401)
+  req=urllib.request.Request(self.url+'/cards/from_other_profile',method='DELETE')
+  with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(req,timeout=3)
+  self.assertEqual(e.exception.code,401)
+  self.assertEqual(len(self.store.state['cards']),3)
+ def test_network_scope_cannot_be_enabled_by_request_headers(self):
+  self.assertTrue(public_push_allowed(self.store.config,'192.168.1.42'))
+  for ip in ('192.168.2.42','8.8.8.8','not-an-ip'):
+   self.assertFalse(public_push_allowed(self.store.config,ip))
+  self.assertFalse(public_push_allowed({'public_push':False,'public_push_networks':['0.0.0.0/0']},'192.168.1.42'))
+  self.store.config['public_push_networks']=['192.168.2.0/24']
+  req=urllib.request.Request(self.url+'/push',data=b'{"title":"denied"}',headers={'X-Forwarded-For':'192.168.2.42','Content-Type':'application/json'})
+  with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(req,timeout=3)
+  self.assertEqual(e.exception.code,401)
+  self.assertEqual(self.store.state['revision'],0)
+
 if __name__=='__main__':unittest.main()

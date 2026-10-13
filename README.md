@@ -4,6 +4,12 @@ A working custom launcher for a humblestead PF1007L photo frame, plus a persiste
 
 **Handoff for Hermes:** start with [docs/HERMES_HANDOFF.md](docs/HERMES_HANDOFF.md). On the existing Mac, the gateway and Android app are already installed. You can push content immediately without rebuilding, installing software, or enabling debugging.
 
+## Open LAN pushes and other Mac profiles
+
+At Ian's request, token-free pushes are enabled for `192.168.1.0/24` and loopback. From any Mac profile, use `/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py status` or its text/image/JSON commands. From another LAN device, use `POST http://192.168.1.128:8765/push` without an Authorization header, or `framectl.py --url http://192.168.1.128:8765 ...` from a clone. See [docs/LAN_PUSH.md](docs/LAN_PUSH.md) for commands and configuration. No token copies or sudo installer are needed for shell-e.
+
+Any admitted device can add or overwrite cards in this mode. The gateway checks the actual socket source IP against configured CIDRs. Saved frame reads and card deletion keep their existing authentication. The owner-run service must remain running while profiles switch.
+
 ## Working installation, as of October 12, 2026
 
 | Component | Verified state |
@@ -15,7 +21,7 @@ A working custom launcher for a humblestead PF1007L photo frame, plus a persiste
 | Gateway | `http://192.168.1.128:8765`, poll interval 3 seconds |
 | Last observed frame IP | `192.168.1.34`; IP and randomized Wi-Fi MAC changed after reboot |
 | Live service | `com.ian.hermes-frame`, a per-user macOS LaunchAgent |
-| Last content update | Revision 3, photo card updated; frame polled afterward |
+| Last content update | Revision 5 after the LAN access test; original deck preserved and a fresh frame poll verified |
 | Wireless ADB | Used successfully before reboot; port 5555 currently closed |
 | Hermes runtime | Not located in process list, Spotlight, or common installation paths; no direct Hermes configuration changed |
 
@@ -79,9 +85,9 @@ Hermes shell tool → framectl.py → loopback POST /push → Mac gateway
                          native Android cards + private offline cache
 ```
 
-`gateway.py` runs a threaded Python HTTP server, persists cards in `data/state.json`, and saves images by SHA-256 in `data/media/`. Writes use a separate token and require a loopback client. The frame reads state/media with a read-only token embedded at build time. The APK keeps its own state and image cache in app-private storage.
+`gateway.py` runs a threaded Python HTTP server, persists cards in `data/state.json`, and saves images by SHA-256 in `data/media/`. Writes normally use a separate token and loopback client; the explicitly enabled public-push mode also accepts token-free LAN and loopback pushes. The frame reads state/media with a read-only token embedded at build time. The APK keeps its own state and image cache in app-private storage.
 
-The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the local network; bearer tokens and media are not encrypted in transit. `/health` is unauthenticated and returns only `{"ok":true}`. State/media require read authentication; `/push`, `/status`, and `/cards/ID` require local write authentication. Do not publish this service to the internet or include local token values in prompts, logs, or commits.
+The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the local network; bearer tokens and media are not encrypted in transit. `/health` is unauthenticated and returns only `{"ok":true}`. State/media require read authentication. `/push` and `/status` allow token-free configured LAN access when public-push mode is enabled; `/cards/ID` still requires local write authentication. Do not publish this service to the internet or include local token values in prompts, logs, or commits.
 
 ## Files and API
 
@@ -92,7 +98,7 @@ The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the lo
 | `gateway.py` | Persistent authenticated content API |
 | `framectl.py` | Hermes-friendly text/image/JSON/status/remove client |
 | `init_config.py` | New-install token generation; refuses to overwrite existing config |
-| `deploy_gateway.py` | Copies gateway/client and registers the Mac login service |
+| `deploy_gateway.py` | Copies gateway/client, installs shared client, and registers the Mac login service |
 | `build.py` | Direct Java → D8 → APK build; no Gradle or network dependency resolution |
 | `test_gateway.py`, `test_config.py` | API and credential-preservation checks |
 | `tools/` | Narrow, one-frame wireless debugging helper and protocol tests |
@@ -103,11 +109,11 @@ The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the lo
 | `GET /health` | None | Minimal health response |
 | `GET /state` | Read token | Deck and revision; records poll time/client |
 | `GET /media/<sha256>.<ext>` | Read token | Stored image bytes |
-| `GET /status` | Write token + loopback | `last_poll`, `client`, `revision`, `recently_connected` |
-| `POST /push` | Write token + loopback | Upsert card; returns revision and card ID |
+| `GET /status` | Configured LAN in public mode, or write token + loopback | `last_poll`, `client`, `revision`, `recently_connected` |
+| `POST /push` | Configured LAN in public mode, or write token + loopback | Upsert card; returns revision and card ID |
 | `DELETE /cards/ID` | Write token + loopback | Remove custom card |
 
-The header is `Authorization: Bearer <token>`. The installed CLI reads its private config automatically; using it avoids handling tokens manually. Success from `/push` means content was accepted and persisted. There is no frame receipt/render acknowledgement endpoint yet.
+In authenticated mode the header is `Authorization: Bearer <token>`. Token-free public LAN pushes omit it. The owner-installed CLI reads its private config automatically; using it avoids handling tokens manually. Success from `/push` means content was accepted and persisted. There is no frame receipt/render acknowledgement endpoint yet.
 
 ## Existing Mac: clone and continue development
 
@@ -190,6 +196,6 @@ Device checks already performed: native app launch, live text push, swipe naviga
 3. Add render acknowledgements and user-friendly delivery errors if stronger confirmation is needed.
 4. Add image orientation as a card/display option, and validate on the frame.
 5. Add bounded image-cache/media cleanup; currently old images remain on disk.
-6. Consider encrypted/authenticated transport and durable addressing if deployment extends beyond this trusted LAN.
+6. Consider encrypted transport and durable addressing if deployment extends beyond this trusted LAN; open LAN push mode is an explicit user preference.
 
 Personal photos, live tokens, router credentials, signing keys, binary backups, generated APKs, and local previews are excluded. Verified local boot/recovery backups are limited partition backups, not a complete device image. No boot/system partition was flashed.

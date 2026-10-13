@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local, persistent content gateway for the Android frame."""
-import argparse,base64,hashlib,hmac,json,mimetypes,os,re,threading,time
+import argparse,base64,hashlib,hmac,ipaddress,json,mimetypes,os,re,threading,time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 ROOT=Path(__file__).resolve().parent
@@ -61,12 +61,20 @@ class Store:
    if not any(c['id']==ident for c in self.state['cards']):raise ValueError('Card not found')
    self.state['cards']=[c for c in self.state['cards'] if c['id']!=ident];self.state['revision']+=1;self.state.pop('focus_id',None);self.save()
    return {'ok':True,'revision':self.state['revision']}
+def public_push_allowed(config,client_ip):
+ if config.get('public_push') is not True:return False
+ try:
+  address=ipaddress.ip_address(client_ip)
+  return any(address in ipaddress.ip_network(net) for net in config.get('public_push_networks',[]))
+ except (ValueError,TypeError):return False
+
 def make_handler(store):
  class Handler(BaseHTTPRequestHandler):
   def log_message(self,*args):pass
   def answer(self,status,data):
    body=json.dumps(data).encode();self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
-  def auth(self,push=False):
+  def auth(self,push=False,allow_public=False):
+   if allow_public and public_push_allowed(store.config,self.client_address[0]):return True
    expected=store.config['push_token' if push else 'read_token']
    supplied=self.headers.get('Authorization','')
    if push and self.client_address[0] not in ('127.0.0.1','::1'):self.answer(403,{'error':'Push requests must originate on this Mac'});return False
@@ -75,7 +83,7 @@ def make_handler(store):
   def do_GET(self):
    if self.path=='/health':self.answer(200,{'ok':True});return
    if self.path=='/status':
-    if not self.auth(True):return
+    if not self.auth(True,allow_public=True):return
     self.answer(200,{'last_poll':store.last_poll,'client':store.last_client,'revision':store.state['revision'],'recently_connected':time.time()-store.last_poll<15});return
    if not self.auth():return
    if self.path=='/state':
@@ -88,7 +96,7 @@ def make_handler(store):
    else:self.answer(404,{'error':'Not found'})
   def do_POST(self):
    if self.path!='/push':self.answer(404,{'error':'Not found'});return
-   if not self.auth(True):return
+   if not self.auth(True,allow_public=True):return
    try:
     n=int(self.headers.get('Content-Length','0'))
     if not 0<n<=12*1024*1024:self.answer(413,{'error':'Payload size must be between 1 byte and 12 MiB'});return
