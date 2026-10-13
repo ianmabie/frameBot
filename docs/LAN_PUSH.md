@@ -13,6 +13,28 @@ Enabled at Ian's explicit request on October 12, 2026: any device on `192.168.1.
 
 The JSON command takes a payload through stdin. Use argv arrays rather than interpolating generated text into a shell command. Read local image files as the invoking profile; this client does not grant access to another profile's personal files.
 
+## Deletion from shell-e
+
+Deletion access was enabled for `shell-e` on October 13, 2026. Run the existing shared client as that profile:
+
+```sh
+/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py remove CARD_ID
+```
+
+The client automatically reads `delete-shell-e.json` beside it, using the invoking account name. That file is owned by Ian with mode 600 plus a macOS ACL granting only `shell-e` read access. It contains a separate delete-only credential, not the owner's push/read tokens. Deletion works through the default loopback URL; remote Hermes should use its existing SSH connection to execute the command as `shell-e` on this Mac. The credential is never attached to a LAN URL or non-literal hostname. Other profiles retain token-free push access but need their own grant to delete.
+
+The grant allows removal of any card except `clock`, including the `hermes` test card. Confirm card IDs before removing content. It does not grant reads of the saved deck/media or access to Ian's files. Removing a card removes it from the deck; old image bytes/caches are not garbage-collected yet.
+
+To grant, rotate, or revoke access, run as the gateway owner in the source checkout:
+
+```sh
+/usr/bin/python3 -B grant_delete.py shell-e
+# Or: /usr/bin/python3 -B grant_delete.py shell-e --revoke
+/usr/bin/python3 -B deploy_gateway.py
+```
+
+`grant_delete.py` preserves existing config fields, stores the scoped token under `delete_tokens`, and applies the named-user file ACL without sudo. Redeploy preserves the credential file and live state. Keep these runtime credentials out of the repo, prompts, and tool output. No card cleanup is performed by the grant script.
+
 ## From any LAN device
 
 ```sh
@@ -34,7 +56,7 @@ Images use the existing image CLI or PNG/JPEG/WebP data URI in the `image` field
 
 - `POST /push` and `GET /status` allow token-free access from the configured subnet and loopback.
 - Any admitted device can add or overwrite a card, including existing photo/text cards; there is no per-device identity or content ownership in this mode.
-- `DELETE /cards/ID` retains owner-token authentication. The default clock remains a clock, and default clock/Hermes cards cannot be deleted.
+- `DELETE /cards/ID` requires loopback plus the owner token or a separately granted delete-only profile token. The default clock remains a clock and cannot be deleted; the Hermes/test card can be deleted.
 - Frame reads of `/state` and `/media` retain their existing read token.
 - The source IP comes from the socket, not `X-Forwarded-For` or other headers.
 - No router port forwarding or firewall changes were made. Other routed subnets are not automatically included. Add their CIDRs only when the user wants those networks admitted.

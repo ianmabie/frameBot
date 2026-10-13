@@ -1,4 +1,4 @@
-import unittest,tempfile,json,threading,urllib.request,urllib.error,base64
+import unittest,tempfile,json,threading,urllib.request,urllib.error,base64,subprocess,sys,pwd,os
 from pathlib import Path
 from http.server import ThreadingHTTPServer
 from gateway import Store,make_handler,public_push_allowed
@@ -34,6 +34,55 @@ class GatewayTest(unittest.TestCase):
   path=self.store.state['cards'][-1]['image_path']
   req=urllib.request.Request(self.url+path,headers={'Authorization':'Bearer read'})
   with urllib.request.urlopen(req) as r:self.assertEqual(r.read(),data)
+ def delete(self,ident,token='',headers=None):
+  req=urllib.request.Request(self.url+'/cards/'+ident,method='DELETE',headers=headers or {'Authorization':'Bearer '+token})
+  with urllib.request.urlopen(req,timeout=3) as r:return json.load(r)
+ def test_delete_only_scope_and_revocation(self):
+  self.store.config.update(public_push=False,delete_tokens={'shell-e':'delete-only'})
+  self.request('/push','push',{'id':'remove-me','title':'Temporary'})
+  for path,payload in [('/state',None),('/status',None),('/push',{'id':'no'})]:
+   with self.assertRaises(urllib.error.HTTPError) as e:self.request(path,'delete-only',payload)
+   self.assertEqual(e.exception.code,401)
+  for token in ('','read','wrong'):
+   with self.assertRaises(urllib.error.HTTPError) as e:self.delete('remove-me',token)
+   self.assertEqual(e.exception.code,401)
+  self.assertTrue(self.delete('remove-me','delete-only')['ok'])
+  self.store.config['delete_tokens']={}
+  with self.assertRaises(urllib.error.HTTPError) as e:self.delete('hermes','delete-only')
+  self.assertEqual(e.exception.code,401)
+  self.assertTrue(self.delete('hermes','push')['ok'])
+ def test_clock_protected_but_hermes_test_card_deletable(self):
+  self.store.config['delete_tokens']={'shell-e':'delete-only'}
+  before=json.dumps(self.store.state)
+  with self.assertRaises(urllib.error.HTTPError) as e:self.delete('clock','delete-only')
+  self.assertEqual(e.exception.code,400);self.assertEqual(json.dumps(self.store.state),before)
+  self.assertTrue(self.delete('hermes','delete-only')['ok'])
+  self.assertEqual([c['id'] for c in self.store.state['cards']],['clock'])
+  self.assertEqual(Store(self.data).state,self.store.state)
+ def test_lan_cannot_delete_even_with_token_or_forwarded_header(self):
+  self.store.config['delete_tokens']={'shell-e':'delete-only'}
+  class Remote:
+   client_address=('192.168.1.42',12345)
+   headers={'Authorization':'Bearer delete-only','X-Forwarded-For':'127.0.0.1'}
+   def answer(self,status,data):self.status=status
+  remote=Remote()
+  self.assertFalse(make_handler(self.store).auth_delete(remote))
+  self.assertEqual(remote.status,403)
+ def test_shared_cli_uses_invoking_profile_and_loopback_only(self):
+  self.store.config['delete_tokens']={'shell-e':'delete-only'}
+  profile=pwd.getpwuid(os.getuid()).pw_name
+  (self.data/('delete-'+profile+'.json')).write_text(json.dumps({'delete_token':'delete-only'}))
+  cli=self.data/'framectl.py'
+  cli.write_text(Path(__file__).with_name('framectl.py').read_text().replace("Path('/Users/Shared/HermesFrameClient')",'Path('+repr(str(self.data))+')'))
+  args=[sys.executable,'-B',str(cli),'--url',self.url,'remove','hermes']
+  result=subprocess.run(args,capture_output=True,text=True)
+  self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(json.loads(result.stdout)['ok'])
+  # An explicit non-literal hostname must not receive the local credential.
+  args[4]=self.url.replace('127.0.0.1','localhost')
+  result=subprocess.run(args,capture_output=True,text=True)
+  self.assertEqual(result.returncode,1);self.assertIn('Unauthorized',result.stderr)
+  self.assertNotIn('delete-only',result.stdout+result.stderr)
+
 class PublicPushTest(GatewayTest):
  def setUp(self):
   super().setUp()

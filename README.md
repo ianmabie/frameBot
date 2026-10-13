@@ -8,9 +8,9 @@ A working custom launcher for a humblestead PF1007L photo frame, plus a persiste
 
 At Ian's request, token-free pushes are enabled for `192.168.1.0/24` and loopback. From any Mac profile, use `/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py status` or its text/image/JSON commands. From another LAN device, use `POST http://192.168.1.128:8765/push` without an Authorization header, or `framectl.py --url http://192.168.1.128:8765 ...` from a clone. See [docs/LAN_PUSH.md](docs/LAN_PUSH.md) for commands and configuration. No token copies or sudo installer are needed for shell-e.
 
-Any admitted device can add or overwrite cards in this mode. The gateway checks the actual socket source IP against configured CIDRs. Saved frame reads and card deletion keep their existing authentication. The owner-run service must remain running while profiles switch.
+Any admitted device can add or overwrite cards in this mode. The gateway checks the actual socket source IP against configured CIDRs. Saved frame reads remain authenticated. Deletion requires loopback plus an owner token or a granted delete-only profile token; `shell-e` now has a grant and can use the shared client’s `remove CARD_ID` command. The owner-run service must remain running while profiles switch.
 
-## Working installation, as of October 12, 2026
+## Working installation, as of October 13, 2026
 
 | Component | Verified state |
 | --- | --- |
@@ -21,7 +21,7 @@ Any admitted device can add or overwrite cards in this mode. The gateway checks 
 | Gateway | `http://192.168.1.128:8765`, poll interval 3 seconds |
 | Last observed frame IP | `192.168.1.34`; IP and randomized Wi-Fi MAC changed after reboot |
 | Live service | `com.ian.hermes-frame`, a per-user macOS LaunchAgent |
-| Last content update | Revision 5 after the LAN access test; original deck preserved and a fresh frame poll verified |
+| Last content update | Revision 26 after the deletion access check; 13 existing cards preserved |
 | Wireless ADB | Used successfully before reboot; port 5555 currently closed |
 | Hermes runtime | Not located in process list, Spotlight, or common installation paths; no direct Hermes configuration changed |
 
@@ -42,7 +42,7 @@ Use Hermes's shell/command execution tool. Python's standard library is enough:
 - Reusing `--id` replaces that card; a new ID appends a swipeable card.
 - A push selects its card by default. `--no-focus` preserves the current page.
 - `--eyebrow` and `--accent '#RRGGBB'` customize text cards.
-- `framectl.py remove CARD_ID` removes a custom card. Default `clock` and `hermes` cannot be removed.
+- `framectl.py remove CARD_ID` removes a custom card. The default `clock` cannot be removed; `hermes` can be removed.
 - `framectl.py json FILE` accepts a structured payload; `json -` reads stdin.
 
 For example:
@@ -87,7 +87,7 @@ Hermes shell tool → framectl.py → loopback POST /push → Mac gateway
 
 `gateway.py` runs a threaded Python HTTP server, persists cards in `data/state.json`, and saves images by SHA-256 in `data/media/`. Writes normally use a separate token and loopback client; the explicitly enabled public-push mode also accepts token-free LAN and loopback pushes. The frame reads state/media with a read-only token embedded at build time. The APK keeps its own state and image cache in app-private storage.
 
-The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the local network; bearer tokens and media are not encrypted in transit. `/health` is unauthenticated and returns only `{"ok":true}`. State/media require read authentication. `/push` and `/status` allow token-free configured LAN access when public-push mode is enabled; `/cards/ID` still requires local write authentication. Do not publish this service to the internet or include local token values in prompts, logs, or commits.
+The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the local network; bearer tokens and media are not encrypted in transit. `/health` is unauthenticated and returns only `{"ok":true}`. State/media require read authentication. `/push` and `/status` allow token-free configured LAN access when public-push mode is enabled; `/cards/ID` requires a local owner or delete-only profile credential. Do not publish this service to the internet or include local token values in prompts, logs, or commits.
 
 ## Files and API
 
@@ -97,6 +97,7 @@ The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the lo
 | `android/AndroidManifest.xml` | HOME/LAUNCHER intent, API 23, landscape activity |
 | `gateway.py` | Persistent authenticated content API |
 | `framectl.py` | Hermes-friendly text/image/JSON/status/remove client |
+| `grant_delete.py` | Owner-run local profile deletion grant/revocation with named-user ACL |
 | `init_config.py` | New-install token generation; refuses to overwrite existing config |
 | `deploy_gateway.py` | Copies gateway/client, installs shared client, and registers the Mac login service |
 | `build.py` | Direct Java → D8 → APK build; no Gradle or network dependency resolution |
@@ -111,7 +112,7 @@ The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the lo
 | `GET /media/<sha256>.<ext>` | Read token | Stored image bytes |
 | `GET /status` | Configured LAN in public mode, or write token + loopback | `last_poll`, `client`, `revision`, `recently_connected` |
 | `POST /push` | Configured LAN in public mode, or write token + loopback | Upsert card; returns revision and card ID |
-| `DELETE /cards/ID` | Write token + loopback | Remove custom card |
+| `DELETE /cards/ID` | Owner or granted delete-only token + loopback | Remove any card except clock |
 
 In authenticated mode the header is `Authorization: Bearer <token>`. Token-free public LAN pushes omit it. The owner-installed CLI reads its private config automatically; using it avoids handling tokens manually. Success from `/push` means content was accepted and persisted. There is no frame receipt/render acknowledgement endpoint yet.
 
@@ -185,7 +186,7 @@ Once wireless ADB has been re-enabled and verified, install with `adb -s CURRENT
 /usr/bin/python3 -B tools/frame_adb_listener.py --dry-run
 ```
 
-Tests cover API authentication, focus/upsert/persistence, rejection without state mutation, image byte round-trip, credential file permissions/non-overwrite, protocol fragmentation, malformed messages, heartbeat handling, login gating, and peer restriction. Loopback/socket tests need local networking permitted.
+Tests cover API authentication, delete-only scope and revocation, shared-client profile selection and credential routing, clock protection, focus/upsert/persistence, rejection without state mutation, image byte round-trip, credential file permissions/non-overwrite, protocol fragmentation, malformed messages, heartbeat handling, login gating, and peer restriction. Loopback/socket tests need local networking permitted.
 
 Device checks already performed: native app launch, live text push, swipe navigation, Original photos recovery, signed APK verification, and startup after reboot. The latest photo update was accepted and the frame subsequently polled; it has not been visually confirmed through a new screenshot since ADB closed.
 

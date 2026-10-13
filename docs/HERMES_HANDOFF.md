@@ -8,11 +8,11 @@ Repository: https://github.com/ianmabie/frameBot
 
 ## Update: shared profiles and open LAN pushes
 
-Ian explicitly requested very open permissions: any LAN device should push without credentials. The gateway now admits token-free `POST /push` and `GET /status` from `192.168.1.0/24` and loopback. `/Users/Shared/HermesFrameClient/framectl.py` is readable/executable through Python from every local profile and defaults to the local gateway. For shell-e, use this shared path instead of Ian's private Library path. It contains no credentials. Do not run the old staged sudo installer.
+Ian explicitly requested very open permissions: any LAN device should push without credentials. The gateway now admits token-free `POST /push` and `GET /status` from `192.168.1.0/24` and loopback. `/Users/Shared/HermesFrameClient/framectl.py` is readable/executable through Python from every local profile and defaults to the local gateway. For shell-e, use this shared path instead of Ian's private Library path. The client code contains no credentials. A separate ACL-protected delete-only credential is now available to shell-e. Do not run the old staged sudo installer.
 
 Remote Hermes on the home server can use the cloned CLI with `--url http://192.168.1.128:8765` or direct JSON POST, provided its source address is on the admitted LAN. Existing shell-e SSH can also run the shared client on the mini. For meal-plan updates, use stable menu/recipe card IDs and `focus:false` to preserve the current photo selection. See [LAN_PUSH.md](LAN_PUSH.md).
 
-Default token-authenticated behavior remains available for fresh installs; this existing service's private config explicitly enables public mode. Any admitted device can overwrite a card by ID. Frame reads and deletion remain authenticated. The service must remain running under Ian while profiles switch.
+Default token-authenticated behavior remains available for fresh installs; this existing service's private config explicitly enables public mode. Any admitted device can overwrite a card by ID. Frame reads and deletion remain authenticated. For deletion, shell-e should run `/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py remove CARD_ID` through its existing local/SSH shell; the client automatically loads its scoped credential on loopback. No owner token or sudo is needed. The clock is protected; the Hermes test card can be removed. See LAN_PUSH.md for grant/revocation and limits. The service must remain running under Ian while profiles switch.
 
 ## First action on the existing Mac
 

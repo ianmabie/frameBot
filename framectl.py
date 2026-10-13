@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Push content from this Mac. No extra packages required."""
-import argparse,base64,json,mimetypes,sys,urllib.request,urllib.error
+import argparse,base64,json,mimetypes,pwd,re,sys,urllib.request,urllib.error
 from pathlib import Path
 root=Path(__file__).resolve().parent
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--url',help='Gateway URL; no config or token required when LAN push is enabled');sub=p.add_subparsers(dest='command',required=True)
@@ -25,9 +25,20 @@ elif a.command=='image':
  f=Path(a.file);mime=mimetypes.guess_type(f.name)[0];data={'card':{'id':a.id,'type':'image','title':a.title,'image':'data:'+str(mime)+';base64,'+base64.b64encode(f.read_bytes()).decode()},'focus':not a.no_focus}
 elif a.command=='json':data=json.load(sys.stdin) if a.file=='-' else json.loads(Path(a.file).read_text())
 elif a.command=='status':method='GET';path='/status';data=None
-else:method='DELETE';path='/cards/'+a.id;data=None
+else:
+ if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',a.id):p.error('Invalid card id')
+ method='DELETE';path='/cards/'+a.id;data=None
 headers={'Content-Type':'application/json'}
 if cfg.get('push_token'):headers['Authorization']='Bearer '+cfg['push_token']
+elif method=='DELETE' and parsed.hostname in ('127.0.0.1','::1'):
+ import os
+ profile=pwd.getpwuid(os.getuid()).pw_name
+ credential=Path('/Users/Shared/HermesFrameClient')/('delete-'+profile+'.json')
+ try:token=json.loads(credential.read_text())['delete_token']
+ except (FileNotFoundError,PermissionError):
+  p.error('Deletion access has not been granted to this profile; the gateway owner can run grant_delete.py '+profile)
+ if not isinstance(token,str) or not token:p.error('Invalid deletion credential')
+ headers['Authorization']='Bearer '+token
 req=urllib.request.Request(base.rstrip('/')+path,data=None if data is None else json.dumps(data).encode(),method=method,headers=headers)
 class NoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,*args,**kwargs):return None

@@ -56,7 +56,7 @@ class Store:
    else:self.state.pop('focus_id',None)
    self.save();return {'ok':True,'revision':self.state['revision'],'card_id':ident}
  def remove(self,ident):
-  if ident in ('clock','hermes'):raise ValueError('Default cards cannot be removed')
+  if ident=='clock':raise ValueError('The default clock cannot be removed')
   with self.lock:
    if not any(c['id']==ident for c in self.state['cards']):raise ValueError('Card not found')
    self.state['cards']=[c for c in self.state['cards'] if c['id']!=ident];self.state['revision']+=1;self.state.pop('focus_id',None);self.save()
@@ -104,8 +104,16 @@ def make_handler(store):
     payload=json.loads(self.rfile.read(n))
     self.answer(200,store.push(payload))
    except (ValueError,TypeError,KeyError) as e:self.answer(400,{'error':str(e)})
+  def auth_delete(self):
+   if self.client_address[0] not in ('127.0.0.1','::1'):
+    self.answer(403,{'error':'Delete requests must originate on this Mac'});return False
+   supplied=self.headers.get('Authorization','')
+   tokens=[store.config['push_token']]+list(store.config.get('delete_tokens',{}).values())
+   if not any(isinstance(token,str) and token and hmac.compare_digest(supplied,'Bearer '+token) for token in tokens):
+    self.answer(401,{'error':'Unauthorized'});return False
+   return True
   def do_DELETE(self):
-   if not self.auth(True):return
+   if not self.auth_delete():return
    if not re.fullmatch(r'/cards/[a-zA-Z0-9_-]{1,64}',self.path):self.answer(404,{'error':'Not found'});return
    try:self.answer(200,store.remove(self.path.split('/')[-1]))
    except ValueError as e:self.answer(400,{'error':str(e)})
