@@ -1,0 +1,1 @@
+{"card":{"id":"dashboard","type":"html","title":"Daily overview","html":"<style>h1{font-size:44px}p{color:#BBD7B2}.box{padding:24px;border:1px solid #3A443F;border-radius:16px}</style><h1>Today at home</h1><div class='box'><p>Next up</p><b>Add a useful update from Hermes here.</b></div>"},"focus":false}
