@@ -14,6 +14,18 @@ Remote Hermes on the home server can use the cloned CLI with `--url http://192.1
 
 Default token-authenticated behavior remains available for fresh installs; this existing service's private config explicitly enables public mode. Any admitted device can overwrite a card by ID. Frame reads and deletion remain authenticated. For deletion, shell-e should run `/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py remove CARD_ID` through its existing local/SSH shell; the client automatically loads its scoped credential on loopback. No owner token or sudo is needed. The clock is protected; the Hermes test card can be removed. See LAN_PUSH.md for grant/revocation and limits. The service must remain running under Ian while profiles switch.
 
+## Update: combined previews and acceptance-gated weeks
+
+The handed-off photo/recipe preview state consists of the photo pair plus three combined recipe cards with photo left and full ingredients/method right. Obsolete standalone recipe samples were removed. This is the provided preview state, not a new live verification or publication by this implementation. Personal photos, recipe sources, generated previews, and personal content remain outside git.
+
+Weekly drafts are **NOT published until Ian accepts the specific menu**. After that acceptance, replace the prior recipe cards while preserving photos and the clock. Use the portable `render_cards.py` commands and `approved_week.py` workflow documented in [README.md](../README.md#no-scroll-previews-and-accepted-weekly-replacement). Rendering uses caller-supplied paths/recipe JSON and fixed 1280 × 800 layouts; overflow fails rather than shrinking text. Portrait pairs are EXIF-correct and uncropped; image titles are blank.
+
+The weekly manifest contains stable `dinner-week` and `recipe-mon..sun` image IDs, with fewer recipe IDs permitted for repeated dinners. Supply an explicit acceptance record bound to the week and SHA-256 of the exact manifest and all image content, with a required nonempty `source_message` string citing Ian's actual accepting conversation message. Optional session metadata cannot replace that citation. Default execution is a dry-run with no client calls or ledger changes; only `--apply` with matching acceptance writes. It runs the existing SSH shared framectl as `shell-e@ian-mini-m6.local`, with argv/stdin and no publisher credential handling. Optional `--identity-file /private/path/ssh-identity` passes a caller-supplied path to `ssh -i` without reading the file; omit it to use SSH's configured identities.
+
+Validate all rendered images before sending. Overwrite stable cards with `focus:false` first. After all new writes succeed, remove only prior managed IDs from the persisted private publisher ledger that are absent this week. The first successful approved publication also removes exactly the three legacy combined previews `sample-recipe-1..3`; it never removes photos/clock or scans for similarly named cards. Preserve the ledger across weeks and run one publisher at a time. A partial failure records completed writes and the uncertain current operation, stops immediately, and requires manual reconciliation before a new apply. Publication is not atomic and must not be blindly repeated.
+
+Check returned IDs and a subsequent frame poll. Accepted/polled is not rendered/seen; the API still has no rendering acknowledgement. A successful publication with unverified later polling exits 2 and must be checked with `status`, not republished. No actual frame pushes, deployment, app/gateway/API/authentication changes, commit, or git push occurred in this implementation.
+
 ## First action on the existing Mac
 
 Run this using your shell tool:

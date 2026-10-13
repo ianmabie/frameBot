@@ -1,0 +1,7 @@
+{
+  "title": "Rice and beans",
+  "meta": "25 minutes | 2 servings",
+  "ingredients": ["1 cup rice", "2 cups water", "1 can beans, drained", "1 tbsp olive oil", "Salt to taste"],
+  "steps": ["Combine rice and water. Bring to a boil, cover and simmer until tender.", "Warm drained beans with olive oil. Season and serve with the rice."],
+  "note": "Synthetic example; supply your own photo using --photo."
+}

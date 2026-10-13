@@ -21,7 +21,7 @@ Any admitted device can add or overwrite cards in this mode. The gateway checks 
 | Gateway | `http://192.168.1.128:8765`, poll interval 3 seconds |
 | Last observed frame IP | `192.168.1.34`; IP and randomized Wi-Fi MAC changed after reboot |
 | Live service | `com.ian.hermes-frame`, a per-user macOS LaunchAgent |
-| Last content update | Revision 26 after the deletion access check; 13 existing cards preserved |
+| Latest handed-off content | Photo pair and three combined recipe preview cards; obsolete standalone samples removed. Not queried live during this implementation |
 | Wireless ADB | Used successfully before reboot; port 5555 currently closed |
 | Hermes runtime | Not located in process list, Spotlight, or common installation paths; no direct Hermes configuration changed |
 
@@ -69,6 +69,74 @@ Supported types: `clock`, `text`, `image`, `html`. Images use the `image` field 
 
 Limits: 20 cards; 8 MiB per image; 12 MiB HTTP push payload; title 200 characters; body 16,000; eyebrow 80; HTML 100,000. The app also limits the complete state response to 2 MiB, so keep a multi-card HTML deck well below that. Images are stored separately and do not inflate the state JSON.
 
+## No-scroll previews and accepted weekly replacement
+
+The handed-off preview state is a paired photo card and three combined recipe previews, each with its photo, ingredients, and method on one landscape image. Obsolete standalone recipe samples were removed. These are previews, not an accepted weekly menu. This implementation did not query or modify the live frame.
+
+`render_cards.py` provides portable `collage` and `recipe` commands. Install Pillow, reportlab, and PyMuPDF into a Python environment (see `requirements-render.txt`). Pass your own paths; no personal images, names, meal-plan sources, or generated media are bundled. Keep inputs, outputs, manifests, acceptance records, and publisher ledgers outside git, or under ignored `local-assets/`.
+
+```sh
+PYTHON=/absolute/path/to/python-with-render-deps
+"$PYTHON" -B render_cards.py collage /private/path/left.jpg /private/path/right.jpg \
+  --output /private/path/photo-pair.png --manifest /private/path/photo-pair.json
+"$PYTHON" -B render_cards.py recipe examples/recipe.json --photo /private/path/food.jpg \
+  --id recipe-mon --week 2026-10-19 --output /private/path/recipe-mon.png \
+  --manifest /private/path/recipe-mon.json
+```
+
+Both outputs are 1280 × 800. Collages apply EXIF orientation and contain both entire portraits without cropping. Recipe photos occupy the left column; all ingredients and numbered steps occupy the right at fixed font sizes. Text is treated literally. Overflow or unsupported font glyphs fail clearly before saving a new image; shorten/split the content rather than shrinking type. Recipe JSON requires `title`, `ingredients` (text or a list), and `steps` (a list); optional fields are `photo`, `meta`, `eyebrow`, `note`, and `credit`. A JSON `photo` path resolves relative to its JSON file; `--photo` overrides it. See the synthetic [example](examples/recipe.json). Image card payloads have a blank title and `focus:false`.
+
+Assemble a weekly rendered manifest with a caller-prepared 1280 × 800 menu image and one recipe image per unique recipe. IDs are stable: `dinner-week` and `recipe-mon` through `recipe-sun`; a repeated recipe can use its first day's ID, so fewer than seven recipe cards are fine. List all seven dinners in the menu image, referring to shared recipe cards as needed. A photo collage belongs to the separate photo workflow, never this weekly manifest.
+
+```json
+{
+  "week": "2026-10-19",
+  "cards": [
+    {"id": "dinner-week", "path": "menu.png", "title": "", "focus": false},
+    {"id": "recipe-mon", "path": "recipe-mon.png", "title": "", "focus": false}
+  ]
+}
+```
+
+Image paths resolve relative to the manifest. All files are read, decoded, and validated before any client call. First review the actual menu and images, then dry-run:
+
+```sh
+"$PYTHON" -B approved_week.py /private/path/week.json --ledger /private/path/publisher-ledger.json
+```
+
+Weekly drafts are **not published until Ian accepts the specific menu**. After acceptance, the operator supplies an explicit record containing the dry-run digest:
+
+```json
+{
+  "approved": true,
+  "accepted_by": "Ian",
+  "week": "2026-10-19",
+  "sha256": "DIGEST_FROM_DRY_RUN",
+  "source_message": "ACTUAL_CONVERSATION_REFERENCE / ACCEPTING_MESSAGE_REFERENCE: Ian's acceptance of this exact menu"
+}
+```
+
+This is a placeholder example, not an approval. `source_message` is required and must be a nonempty string citing the actual conversation message in which Ian accepted this exact menu and rendered content; replace the placeholder with that message's reference. Optional session metadata (for example, `session_id`) may accompany it but cannot substitute for `source_message`. The tool rejects missing, blank, or non-string citations; the operator must verify the cited message's acceptance.
+
+The tool does not create acceptance records or infer acceptance. Its SHA-256 covers length-prefixed exact manifest bytes followed by length-prefixed image bytes in manifest order. Editing any manifest byte or image invalidates approval. The record is an operator-provided assertion of Ian's acceptance, not an identity/signature verification system.
+
+```sh
+# Still a dry-run; no SSH, writes, or ledger mutation:
+"$PYTHON" -B approved_week.py /private/path/week.json --ledger /private/path/publisher-ledger.json \
+  --approval /private/path/accepted.json
+# Only run after Ian has accepted that exact menu and rendered content:
+"$PYTHON" -B approved_week.py /private/path/week.json --ledger /private/path/publisher-ledger.json \
+  --approval /private/path/accepted.json --identity-file /private/path/ssh-identity --apply
+```
+
+Apply uses subprocess argv and JSON stdin through SSH as `shell-e@ian-mini-m6.local` (`--host shell-e@HOST` can select an existing SSH hostname), invoking `/usr/bin/python3 -B /Users/Shared/HermesFrameClient/framectl.py`. Optional `--identity-file /private/path/ssh-identity` passes the caller's path as a separate `ssh -i` argument; omit it to use SSH's configured identity selection. The publisher does not read the identity file. The existing client handles its own permissions; the publisher never loads or copies credentials. No app, gateway, API, or authentication changes are needed.
+
+Every new card is sent with `focus:false`, and its returned ID/revision is checked. Only after all writes succeed does cleanup remove previous managed IDs recorded in the persistent publisher ledger but absent from the new manifest. On the first successful approved publication it also removes exactly `sample-recipe-1`, `sample-recipe-2`, and `sample-recipe-3` (already absent is harmless). Photos, the clock, and all untracked IDs are preserved. Never delete the prior week before uploading its replacement. The existing 20-card limit still applies; if there is no room, publication stops without pre-deleting cards.
+
+Publication is a sequence of acknowledged writes, not an atomic transaction. The private ledger records completed writes/removals and the current possibly uncertain operation. Any partial failure stops immediately and blocks another apply until the operator manually reconciles the frame and ledger; do not delete the ledger and blindly retry. After reconciliation, preserve the union of known managed IDs, set `legacy_removed` according to the actual cleanup, and clear the failed `attempt` only when deliberately authorizing a new attempt. Use one publisher process per ledger. Keep this ledger across weeks; it is the sole ownership history used for cleanup.
+
+After successful writes/cleanup, the publisher checks for a later `last_poll` and a revision at least as new as the final acknowledgement. This verifies polling, **not rendering**. Apply exits 2 if publication succeeded but a later poll was not verified; use the existing client's `status` later, without resending. Exact already-published manifests are refused to prevent repeats. Dry-run exits 0; invalid approvals and partial publications exit 1.
+
 ## Everyday operation
 
 Swipe left/right or tap page indicators. Long-press **FRAME** at the top left to edit the source address or open **Original photos**. The custom app currently uses `http://192.168.1.128:8765`. Keep this Mac awake on the same LAN for new content; cached cards and the clock remain available otherwise. If the Mac's IP changes, update the source address in that menu. A DHCP reservation for the Mac is useful; do not assume the frame's randomized MAC will stay fixed.
@@ -97,6 +165,9 @@ The gateway binds IPv4 `0.0.0.0:8765` for LAN reads. Transport is HTTP on the lo
 | `android/AndroidManifest.xml` | HOME/LAUNCHER intent, API 23, landscape activity |
 | `gateway.py` | Persistent authenticated content API |
 | `framectl.py` | Hermes-friendly text/image/JSON/status/remove client |
+| `render_cards.py` | Portable EXIF-correct photo pairs and fixed-layout recipe images |
+| `approved_week.py` | Dry-run-first, acceptance-bound weekly publication and ledger cleanup |
+| `test_cards.py` | Synthetic renderer and subprocess fake-client publication tests |
 | `grant_delete.py` | Owner-run local profile deletion grant/revocation with named-user ACL |
 | `init_config.py` | New-install token generation; refuses to overwrite existing config |
 | `deploy_gateway.py` | Copies gateway/client, installs shared client, and registers the Mac login service |
@@ -181,12 +252,12 @@ Once wireless ADB has been re-enabled and verified, install with `adb -s CURRENT
 ## Validation
 
 ```sh
-/usr/bin/python3 -B -m unittest test_gateway test_config
+"$PYTHON" -B -m unittest discover -p 'test_*.py'
 /usr/bin/python3 -B -m unittest discover -s tools -p 'test_*.py'
 /usr/bin/python3 -B tools/frame_adb_listener.py --dry-run
 ```
 
-Tests cover API authentication, delete-only scope and revocation, shared-client profile selection and credential routing, clock protection, focus/upsert/persistence, rejection without state mutation, image byte round-trip, credential file permissions/non-overwrite, protocol fragmentation, malformed messages, heartbeat handling, login gating, and peer restriction. Loopback/socket tests need local networking permitted.
+Use the rendering-dependency Python above for the full suite. Card tests use temporary generated solid images and a fake subprocess client; they never contact SSH or the frame. Tests cover rendering overflow, uncropped EXIF photo pairs, acceptance mismatch, dry-run isolation, preservation, partial failures, weekly cleanup, later polling, API authentication, delete-only scope and revocation, shared-client profile selection and credential routing, clock protection, focus/upsert/persistence, rejection without state mutation, image byte round-trip, credential file permissions/non-overwrite, protocol fragmentation, malformed messages, heartbeat handling, login gating, and peer restriction. Loopback/socket tests need local networking permitted.
 
 Device checks already performed: native app launch, live text push, swipe navigation, Original photos recovery, signed APK verification, and startup after reboot. The latest photo update was accepted and the frame subsequently polled; it has not been visually confirmed through a new screenshot since ADB closed.
 
