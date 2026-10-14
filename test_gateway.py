@@ -34,6 +34,23 @@ class GatewayTest(unittest.TestCase):
   path=self.store.state['cards'][-1]['image_path']
   req=urllib.request.Request(self.url+path,headers={'Authorization':'Bearer read'})
   with urllib.request.urlopen(req) as r:self.assertEqual(r.read(),data)
+ def test_cookbook_http_import_read_and_unchanged_weekly_deck(self):
+  from test_cookbook import png,synthetic_recipe
+  from cookbook import asset_path
+  thumb,detail=png(384,200),png(1280,800)
+  self.request('/push','push',{'id':'recipe-mon','title':'Accepted weekly card','focus':False})
+  before=json.dumps(self.store.state,sort_keys=True)
+  for data in (thumb,detail):
+   result=self.request('/cookbook/assets','push',{'image':'data:image/png;base64,'+base64.b64encode(data).decode()})
+   self.assertEqual(result['asset_path'],asset_path(data))
+  value={'version':1,'recipes':[dict(synthetic_recipe(i),thumbnail_path=asset_path(thumb),detail_path=asset_path(detail)) for i in range(50)]}
+  result=self.request('/cookbook/import','push',value)
+  self.assertEqual(result['recipes'],50)
+  self.assertEqual(self.request('/cookbook','read')['revision'],result['revision'])
+  self.assertEqual(json.dumps(self.store.state,sort_keys=True),before)
+  for path in ('/cookbook',asset_path(detail)):
+   with self.assertRaises(urllib.error.HTTPError) as e:self.request(path)
+   self.assertEqual(e.exception.code,401)
  def delete(self,ident,token='',headers=None):
   req=urllib.request.Request(self.url+'/cards/'+ident,method='DELETE',headers=headers or {'Authorization':'Bearer '+token})
   with urllib.request.urlopen(req,timeout=3) as r:return json.load(r)

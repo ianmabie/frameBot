@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parent
 live=Path.home()/'Library/Application Support/HermesFrame'
 live.mkdir(mode=0o700,parents=True,exist_ok=True)
-for name in ('gateway.py','framectl.py'):shutil.copy2(root/name,live/name)
+for name in ('gateway.py','framectl.py','cookbook.py','cookbook_import.py'):shutil.copy2(root/name,live/name)
 data=live/'data'
 if not data.exists():shutil.copytree(root/'data',data)
 data.chmod(0o700)
@@ -22,7 +22,7 @@ if shared.is_symlink():raise SystemExit('Shared client path must not be a symlin
 shared.mkdir(mode=0o755,exist_ok=True)
 if shared.stat().st_uid!=os.getuid():raise SystemExit('Shared client directory must belong to the gateway owner')
 shared.chmod(0o755)
-for name,source in [('framectl.py',root/'framectl.py'),('README.md',root/'docs/LAN_PUSH.md')]:
+for name,source in [('framectl.py',root/'framectl.py'),('cookbook.py',root/'cookbook.py'),('cookbook_import.py',root/'cookbook_import.py'),('README.md',root/'docs/LAN_PUSH.md')]:
  target=shared/name
  if target.is_symlink():raise SystemExit('Shared client file must not be a symlink')
  shutil.copyfile(source,target);target.chmod(0o644)
