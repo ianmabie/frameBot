@@ -4,6 +4,9 @@ import argparse
 import io
 import json
 import re
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -14,6 +17,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph
+from cookbook import validate_recipes, manifest, validate_png, asset_path, DETAIL_SIZE, THUMB_SIZE
 
 W, H = 1280, 800
 BG, INK, MUTED, ACCENT = '#161B19', '#F1F0E7', '#B8C6BC', '#BBD7B2'
@@ -72,7 +76,7 @@ def recipe(data, photo_path):
         return top-height
 
     if data.get('credit'):
-        para(data['credit'], 24, 57, 414, 15, MUTED)
+        para(data['credit'], 24, 66, 414, 15, MUTED, floor=12)
     x, width, y = 466, 790, 774
     if data.get('eyebrow'):
         y = para(data['eyebrow'], x, y, width, 17, ACCENT)-12
@@ -99,9 +103,58 @@ def recipe(data, photo_path):
         return Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
 
 
+def render_cookbook(catalog, output):
+    """Render all 50 into staging first. Failure never publishes a partial bundle."""
+    catalog, output = Path(catalog), Path(output)
+    value = json.loads(catalog.read_text())
+    entries = value.get('recipes') if isinstance(value, dict) else value
+    entries = validate_recipes(entries, exact_count=50)
+    if output.exists():
+        raise ValueError('Output bundle already exists; choose a new revision directory')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix='.cookbook-', dir=output.parent))
+    try:
+        (stage / 'assets').mkdir()
+        rendered = []
+        for entry in entries:
+            try:
+                source = (catalog.parent / entry['photo']).resolve()
+                if not source.is_relative_to((catalog.parent / 'photos').resolve()):
+                    raise ValueError('Photo escapes catalog photos directory')
+                data = dict(entry, eyebrow=entry['category'].upper(),
+                            meta=f"About {entry['minutes']} min | Serves 3",
+                            credit='Representative photo\n' + entry['photo_credit'])
+                detail = recipe(data, source)
+                thumbnail = ImageOps.fit(photo(source), THUMB_SIZE)
+                r = dict(entry)
+                for key, image, size in [('detail_path', detail, DETAIL_SIZE),
+                                          ('thumbnail_path', thumbnail, THUMB_SIZE)]:
+                    stream = io.BytesIO()
+                    image.save(stream, format='PNG', optimize=True)
+                    body = stream.getvalue()
+                    validate_png(body, size)
+                    r[key] = asset_path(body)
+                    (stage / 'assets' / r[key].split('/')[-1]).write_bytes(body)
+                rendered.append(r)
+            except (ValueError, OSError) as e:
+                raise ValueError(f"Recipe {entry['id']}: {e}") from e
+        bundle = {'version': 1, 'recipes': rendered}
+        revision = manifest(bundle)['revision']
+        (stage / 'manifest.json').write_text(json.dumps(bundle, indent=2)+'\n')
+        os.rename(stage, output)
+        return {'manifest': str((output / 'manifest.json').resolve()), 'recipes': 50,
+                'revision': revision}
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
+    library = sub.add_parser('cookbook', help='Render exactly 50 catalog recipes into a new offline bundle')
+    library.add_argument('catalog', type=Path)
+    library.add_argument('--output', required=True, type=Path, help='New bundle directory, outside git')
     pair = sub.add_parser('collage')
     pair.add_argument('left', type=Path)
     pair.add_argument('right', type=Path)
@@ -115,6 +168,9 @@ def main():
         parser.add_argument('--id', default='photo-pair' if parser is pair else 'recipe-mon')
     a = p.parse_args()
     try:
+        if a.command == 'cookbook':
+            print(json.dumps(render_cookbook(a.catalog, a.output)))
+            return
         if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', a.id):
             raise ValueError('Invalid card ID')
         if a.output.suffix.lower() not in ('.jpg', '.jpeg', '.png'):

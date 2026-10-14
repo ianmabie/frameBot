@@ -6,6 +6,16 @@ Keep useful default content on the photo frame, swipe among cards, and let the H
 
 Repository: https://github.com/ianmabie/frameBot
 
+## October 14: cookbook reviewed; physical deployment pending
+
+Final parent verification supersedes historical sandbox limitations below: independent review passed; 54 root tests, 4 protocol tests, 13 production-cache regressions plus executable navigation passed; final API 23 unsigned APK rebuilt successfully. Exactly 50 actual recipes rendered and imported/read back through a local test gateway, verifying all 100 asset references without changing its weekly deck. User authorized merging and installation plus necessary temporary DNS/debugging changes, restored afterward. Owner signing access and router authentication remain pending; user is resolving them. Do not touch the handed-off browser/session until the user returns. No production installation or DNS change has occurred.
+
+The cookbook source implementation adds Photos / This Week / Cookbook navigation and an independent offline collection of up to 50 recipes. Cookbook import never changes the 20-card deck or approves a weekly menu. `approved_week.py` and its acceptance requirements remain unchanged. Parent reported frame `192.168.1.35` and deck revision 33; older `.34` observations below are historical. No live status query or deployment succeeded in this sandbox.
+
+Read [COOKBOOK_DEPLOYMENT.md](COOKBOOK_DEPLOYMENT.md) and [the implementation report](../COOKBOOK_IMPLEMENTATION_REPORT.md) before using the new source. This task uses synthetic fixtures and does not poll the separate catalog. No runtime recipes/media/secrets are included. Parent reports **54 root tests + 4 protocol tests + 9 executable Java cache regressions passed**, and a **real API 23 unsigned APK build passed**. The final independent cache race fix serializes complete deck/cookbook download-to-index-save transactions with trimming across Activity instances and adds four production-method concurrency/lifecycle regressions. Production and harness type checking against API 23 passed; protocol tests reran with 4 passes. Running the expanded Java suite was blocked at new scratch directory creation, so parent must rerun it and rebuild the unsigned APK for this final patch. Signing, device installation and remote merge remain unperformed; no commit or push occurred here. The build refuses to generate a signing key.
+
+Owner-only deployment uses Ian's original key/config directly from his owner session, with parent review and current authorization first. Do not access/copy Ian's private files through shell-e. Do not use sudo, change routers/partitions, uninstall the app or re-enable wireless debugging without the owner's current confirmation. The original-app escape remains in the implementation and needs owner device verification after a correctly signed update.
+
 ## Update: shared profiles and open LAN pushes
 
 Ian explicitly requested very open permissions: any LAN device should push without credentials. The gateway now admits token-free `POST /push` and `GET /status` from `192.168.1.0/24` and loopback. `/Users/Shared/HermesFrameClient/framectl.py` is readable/executable through Python from every local profile and defaults to the local gateway. For shell-e, use this shared path instead of Ian's private Library path. The client code contains no credentials. A separate ACL-protected delete-only credential is now available to shell-e. Do not run the old staged sudo installer.
@@ -90,7 +100,7 @@ No `hermes` executable, `.hermes` directory, Hermes process, Spotlight match, or
 
 1. Read README.md and check live status.
 2. Push requested content with the existing client before considering app changes.
-3. If developing in a new clone on this Mac, copy the current private config and existing signing key from the original installation into ignored local directories. Do not regenerate tokens/key.
+3. Build as the owner using `build.py --config /owner/live/data/config.json --keystore /owner/original/project/android/build/frame.keystore`. Do not copy/read owner private files through shell-e or regenerate tokens/key.
 4. Run API/config/protocol tests. Build/verify the APK if Android code changes.
 5. Deploy gateway-only changes with deploy_gateway.py; it preserves live data and restarts the LaunchAgent.
 6. Android changes require re-enabling wireless ADB: see WIRELESS_ACCESS.md. Keep original AiMOR/OTA installed, and preserve the tested Original photos escape path.
@@ -105,7 +115,7 @@ The initial repo snapshot includes a portable SDK/JDK build override, fresh-inst
 - Source URL can be changed on-device, but the read token is embedded in the APK.
 - HTTP on the LAN; no TLS or render acknowledgements. Public-push mode uses admitted source subnets, with no per-device identity; frame reads and deletion retain bearer authentication.
 - State response limit 2 MiB and fixed-size typography; avoid giant HTML decks/long titles.
-- Old image files and decoded bitmap lifetime need cleanup under sustained use on the ~1 GiB device.
+- The deployed old app still retains old images. Pending cookbook source prunes Android disk cache and confines decoded bitmaps to the visible screen; owner deployment and device validation are outstanding. Gateway unreferenced media still needs owner-controlled cleanup.
 - The actual physical storage is about 15.75 GB despite the listing advertising 32 GB.
 - Boot/recovery backups do not cover userdata/system and are not a general restore image.
 

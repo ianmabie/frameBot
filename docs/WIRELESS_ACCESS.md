@@ -2,6 +2,8 @@
 
 Normal content pushes require only the installed gateway/client. Debugging is needed for APK updates, screenshots, or Android diagnostics. After the verified final reboot, ADB port 5555 was closed and the frame continued to poll the gateway.
 
+October 14 parent observation: current frame `192.168.1.35`, deck revision 33; `.34` below is historical. Cookbook source has not been deployed. Any new debugging/router/vendor-channel step requires current owner confirmation; the cookbook feature permission is not permission to bypass owner access. See [cookbook owner-run steps](COOKBOOK_DEPLOYMENT.md). Build only with the existing key: the build script now refuses to generate one.
+
 ## Observed device state
 
 - PF1007L / Allwinner A33 (`sun8i`), Android 6.0.1.

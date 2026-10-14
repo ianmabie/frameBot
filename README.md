@@ -19,7 +19,7 @@ Any admitted device can add or overwrite cards in this mode. The gateway checks 
 | Custom app | Package `com.ian.frame`; installed and launches as HOME after reboot |
 | Mac | User `ian`, host `ian-mini-m6`, LAN IP `192.168.1.128` |
 | Gateway | `http://192.168.1.128:8765`, poll interval 3 seconds |
-| Last observed frame IP | `192.168.1.34`; IP and randomized Wi-Fi MAC changed after reboot |
+| Last reported frame IP | `192.168.1.35`, deck revision 33, reported by parent October 14; not queried by this implementation. `.34` is stale |
 | Live service | `com.ian.hermes-frame`, a per-user macOS LaunchAgent |
 | Latest handed-off content | Photo pair and three combined recipe preview cards; obsolete standalone samples removed. Not queried live during this implementation |
 | Wireless ADB | Used successfully before reboot; port 5555 currently closed |
@@ -143,6 +143,39 @@ Swipe left/right or tap page indicators. Long-press **FRAME** at the top left to
 
 Original AiMOR and its OTA updater remain installed, but were disabled to make the custom app the sole HOME launcher. **Original photos** uses the frame's existing `su` to re-enable both and launch AiMOR. This path was tested before the final reboot. Returning to AiMOR can affect which launcher starts afterward; see [wireless access and recovery](docs/WIRELESS_ACCESS.md).
 
+## Cookbook library (source implementation; awaiting owner deployment)
+
+The native landscape app has visible **Photos / This Week / Cookbook** navigation. Photos retains the clock, photos, notes and preview cards; This Week selects existing `dinner-week` and `recipe-mon..sun` IDs. Those IDs and the deck remain unchanged. Cookbook is a separate collection of up to 50 recipes and never consumes the deck's 20-card allowance. Choosing a cookbook recipe opens its detail; it does not add a weekly dinner or approve a menu. The weekly acceptance workflow above remains required.
+
+Cookbook offers a category selector, eight photo/title tiles per page, page buttons and horizontal swipes. Recipe detail displays the renderer's complete 1280 × 800 photo-left/ingredients-and-method-right image without scrolling, with Library and previous/next buttons. Category, minutes, servings, note, photo credit and the representative-photo label are rendered into each detail. Source URLs and adaptation metadata remain in the offline index; the app never loads those websites. The **FRAME** long-press / **Original photos** escape remains available in every tab. Photo/weekly selections are retained across tab changes and saved for restart; the startup tab remains Photos.
+
+Supply your own private catalog as either a list or `{"recipes": [...]}`. The render command requires **exactly 50** unique recipes, each with `id`, `title`, `category`, `minutes` (estimated integer 10–35), `servings` (3), `ingredients` (1–18 quantified strings), `steps` (3–5 strings), `note`, `photo` (relative path under `photos/`), `photo_credit`, `photo_source_url`, `photo_representative` (true), `source_urls` (1–10 HTTP/HTTPS attribution URLs), and `original_or_adapted` (nonempty attribution/adaptation description). Each ingredient must include a numeric quantity; express salt/oil/seasonings explicitly too. Bounds are in [cookbook.py](cookbook.py). Typography stays fixed: overflow, unsupported glyphs, excessive asset size or credit overflow fail with the recipe ID. Review actual images before any import.
+
+```sh
+PYTHON=/absolute/path/to/python-with-render-deps
+"$PYTHON" -B render_cards.py cookbook /private/path/catalog.json \
+  --output /private/path/cookbook-rendered-v1
+# Dry-run: validates every manifest entry and image before any network calls.
+"$PYTHON" -B framectl.py --url http://192.168.1.128:8765 cookbook-import \
+  /private/path/cookbook-rendered-v1/manifest.json
+# After source/content review and owner deployment, when publication is authorized:
+"$PYTHON" -B framectl.py --url http://192.168.1.128:8765 cookbook-import \
+  /private/path/cookbook-rendered-v1/manifest.json --apply
+```
+
+The output directory must be new. Rendering stages the entire bundle before publishing the directory; any failure removes staging and leaves previous bundles intact. Detail PNGs and 384 × 200 photo thumbnails are named by SHA-256. The import client validates all files first, uploads one file at a time, checks returned paths, then sends one manifest replacement. Upload failure leaves the old cookbook index usable; successful uploads may leave unreferenced assets. An identical retry is safe for the cookbook. It never calls `/push` or `/cards`, and never reads a weekly approval/ledger. The supplied catalog will be prepared separately; no runtime recipes/media are bundled in Git.
+
+The app saves the new cookbook index only after downloading and checking every asset's hash and dimensions. Failed transfers retain the prior complete offline library. Network loss keeps Photos, This Week, category filtering, paged thumbnails, detail swipes and Library navigation available from saved files. First sync can take several minutes; the existing library remains visible meanwhile. The clock works offline without a download. The app polls the cookbook every 30 seconds alongside the existing 3-second deck polling; cookbook sync failures do not discard deck updates. Old cached files and interrupted transfers are pruned against committed indices. With current limits, retained files are at most 310 MiB; one staged update can temporarily use up to 470 MiB, below the 480 MiB cache guard. The display decodes only the current eight thumbnails or one detail/card, uses sampled RGB565 bitmaps, drops detached screen references, and never preloads 50 full-size bitmaps.
+
+| Endpoint | Guard | Behavior |
+| --- | --- | --- |
+| `GET /cookbook` | Existing read token | Offline index, stable content-derived revision |
+| `GET /cookbook/assets/<sha256>.png` | Existing read token | Immutable PNG bytes |
+| `POST /cookbook/assets` | Existing push-token/loopback or explicitly admitted LAN | `{image: "data:image/png;base64,..."}`; validates bounded RGB/RGBA PNG, returns `asset_path` |
+| `POST /cookbook/import` | Same write guard | `{version: 1, recipes: [...]}`; 1–50 entries; every entry includes `thumbnail_path`, `detail_path` and catalog metadata; validates all referenced assets, atomically replaces `data/cookbook.json` |
+
+Manifest JSON is limited to 512 KiB, PNGs to 1.5 MiB with exact thumbnail/detail dimensions. `/status` also reports `cookbook_revision`. Collection revisions are canonical SHA-256 values independent of the deck revision; formatting/key ordering and unchanged imports do not create revisions. The gateway/client require only Python's standard library. Deploy now includes the cookbook modules in both the owner gateway and shared client directory. Authentication, admitted subnets, delete-only scope, and network exposure are unchanged. There is no rendering acknowledgement; an accepted import is not a visual confirmation. See [docs/COOKBOOK_DEPLOYMENT.md](docs/COOKBOOK_DEPLOYMENT.md) and [COOKBOOK_IMPLEMENTATION_REPORT.md](COOKBOOK_IMPLEMENTATION_REPORT.md).
+
 ## How it works
 
 ```text
@@ -245,7 +278,7 @@ export JAVA_HOME="/absolute/path/to/jdk/Contents/Home"
 
 The build discovers `platforms/**/android.jar` and `build-tools/**/aapt2`, or the temporary tree's `android-platform` / `android-tools` layout. Keep one selected toolchain in that root for deterministic selection. Output is `android/build/frame.apk`; `apksigner verify` runs automatically.
 
-**Keep the existing `android/build/frame.keystore` locally.** It is ignored, and a fresh clone creates a different development key. Updating the installed package requires the original key. Copy it from the original checkout's ignored build directory when continuing on this Mac. Uninstalling to bypass a signature mismatch deletes the app's private cache/settings; avoid that. The generated `BuildConfig.java` and APK contain the read token, so build output is excluded from Git.
+**Use the existing owner signing key.** `build.py` never generates a key and refuses a signed build when the original key is missing. Use `--keystore /owner/original/project/android/build/frame.keystore` and `--config /owner/live/data/config.json` from the owner's session; do not copy/read owner secrets through shell-e. The default ignored paths still work in the original project. `--unsigned` creates `android/build/aligned.apk` for source review when SDK/config are available; it cannot update the existing frame. Signed builds verify and print certificate fingerprints, which the owner must compare with the previously verified installed build. Uninstalling to bypass a mismatch deletes settings/cache; avoid it. Build output and generated `BuildConfig.java` contain the read token and stay excluded from Git.
 
 Once wireless ADB has been re-enabled and verified, install with `adb -s CURRENT_FRAME_IP:5555 install -r android/build/frame.apk`. Full steps and current limitations are in [docs/WIRELESS_ACCESS.md](docs/WIRELESS_ACCESS.md).
 
@@ -267,7 +300,7 @@ Device checks already performed: native app launch, live text push, swipe naviga
 2. Decide the desired default content (weather, calendar, reminders, family photos, or another deck).
 3. Add render acknowledgements and user-friendly delivery errors if stronger confirmation is needed.
 4. Add image orientation as a card/display option, and validate on the frame.
-5. Add bounded image-cache/media cleanup; currently old images remain on disk.
+5. Add owner-controlled gateway media cleanup; the Android cache now prunes obsolete images, while unreferenced gateway uploads remain on disk.
 6. Consider encrypted transport and durable addressing if deployment extends beyond this trusted LAN; open LAN push mode is an explicit user preference.
 
 Personal photos, live tokens, router credentials, signing keys, binary backups, generated APKs, and local previews are excluded. Verified local boot/recovery backups are limited partition backups, not a complete device image. No boot/system partition was flashed.

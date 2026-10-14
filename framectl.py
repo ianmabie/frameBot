@@ -8,6 +8,9 @@ text=sub.add_parser('text');text.add_argument('title');text.add_argument('body')
 image=sub.add_parser('image');image.add_argument('file');image.add_argument('--id',default='image');image.add_argument('--title',default='');image.add_argument('--no-focus',action='store_true')
 raw=sub.add_parser('json');raw.add_argument('file',help='JSON card payload, or - for stdin')
 sub.add_parser('status')
+sub.add_parser('cookbook',help='Read cookbook index (owner-installed read token required)')
+library=sub.add_parser('cookbook-import',help='Validate rendered bundle; --apply uploads and atomically replaces cookbook only')
+library.add_argument('file');library.add_argument('--apply',action='store_true')
 remove=sub.add_parser('remove');remove.add_argument('id')
 a=p.parse_args()
 cfg={}
@@ -25,11 +28,14 @@ elif a.command=='image':
  f=Path(a.file);mime=mimetypes.guess_type(f.name)[0];data={'card':{'id':a.id,'type':'image','title':a.title,'image':'data:'+str(mime)+';base64,'+base64.b64encode(f.read_bytes()).decode()},'focus':not a.no_focus}
 elif a.command=='json':data=json.load(sys.stdin) if a.file=='-' else json.loads(Path(a.file).read_text())
 elif a.command=='status':method='GET';path='/status';data=None
+elif a.command=='cookbook':method='GET';path='/cookbook';data=None
+elif a.command=='cookbook-import':data=None
 else:
  if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',a.id):p.error('Invalid card id')
  method='DELETE';path='/cards/'+a.id;data=None
 headers={'Content-Type':'application/json'}
-if cfg.get('push_token'):headers['Authorization']='Bearer '+cfg['push_token']
+if a.command=='cookbook' and cfg.get('read_token'):headers['Authorization']='Bearer '+cfg['read_token']
+elif cfg.get('push_token'):headers['Authorization']='Bearer '+cfg['push_token']
 elif method=='DELETE' and parsed.hostname in ('127.0.0.1','::1'):
  import os
  profile=pwd.getpwuid(os.getuid()).pw_name
@@ -39,11 +45,17 @@ elif method=='DELETE' and parsed.hostname in ('127.0.0.1','::1'):
   p.error('Deletion access has not been granted to this profile; the gateway owner can run grant_delete.py '+profile)
  if not isinstance(token,str) or not token:p.error('Invalid deletion credential')
  headers['Authorization']='Bearer '+token
-req=urllib.request.Request(base.rstrip('/')+path,data=None if data is None else json.dumps(data).encode(),method=method,headers=headers)
 class NoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,*args,**kwargs):return None
 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+def request(endpoint,payload=None,verb='POST'):
+ req=urllib.request.Request(base.rstrip('/')+endpoint,data=None if payload is None else json.dumps(payload).encode(),method=verb,headers=headers)
+ with opener.open(req,timeout=30) as r:return json.load(r)
 try:
- with opener.open(req,timeout=15) as r:print(r.read().decode())
+ if a.command=='cookbook-import':
+  from cookbook_import import publish
+  print(json.dumps(publish(a.file,request,a.apply)))
+ else:print(json.dumps(request(path,data,method)))
 except urllib.error.HTTPError as e:print(e.read().decode(),file=sys.stderr);sys.exit(1)
 except urllib.error.URLError:print('Gateway unavailable: '+base,file=sys.stderr);sys.exit(1)
+except (ValueError,KeyError,OSError) as e:print(str(e),file=sys.stderr);sys.exit(1)

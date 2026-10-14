@@ -3,6 +3,7 @@
 import argparse,base64,hashlib,hmac,ipaddress,json,mimetypes,os,re,threading,time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from cookbook import empty_index,manifest,validate_png,asset_path,ASSET_RE,MAX_ASSET,THUMB_SIZE,DETAIL_SIZE
 ROOT=Path(__file__).resolve().parent
 DEFAULT={"revision":0,"focus_id":"clock","cards":[
  {"id":"clock","type":"clock","title":"Today","accent":"#BBD7B2"},
@@ -14,6 +15,34 @@ class Store:
   self.path=self.data/'state.json';self.media=self.data/'media';self.media.mkdir(exist_ok=True)
   self.last_poll=0;self.last_client=None
   self.state=json.loads(self.path.read_text()) if self.path.exists() else json.loads(json.dumps(DEFAULT))
+  self.cookbook_path=self.data/'cookbook.json';self.cookbook_media=self.data/'cookbook-assets';self.cookbook_media.mkdir(exist_ok=True)
+  self.cookbook=json.loads(self.cookbook_path.read_text()) if self.cookbook_path.exists() else empty_index()
+ def upload_cookbook_asset(self,payload):
+  if not isinstance(payload,dict) or set(payload)!={'image'} or not isinstance(payload['image'],str) or not payload['image'].startswith('data:image/png;base64,'):raise ValueError('Expected a cookbook PNG image')
+  try:body=base64.b64decode(payload['image'].split(',',1)[1],validate=True)
+  except Exception:raise ValueError('Invalid image encoding')
+  validate_png(body);path=asset_path(body);target=self.cookbook_media/path.split('/')[-1]
+  with self.lock:
+   if not target.exists() or target.stat().st_size!=len(body) or target.read_bytes()!=body:
+    tmp=target.with_suffix('.tmp')
+    with tmp.open('wb') as out:out.write(body);out.flush();os.fsync(out.fileno())
+    tmp.chmod(0o600);os.replace(tmp,target)
+  return {'ok':True,'asset_path':path}
+ def import_cookbook(self,payload):
+  clean=manifest(payload)
+  with self.lock:
+   # Validate every referenced file before touching the authoritative index.
+   for recipe in clean['recipes']:
+    for key,size in [('thumbnail_path',THUMB_SIZE),('detail_path',DETAIL_SIZE)]:
+     path=recipe[key];target=self.cookbook_media/path.split('/')[-1]
+     if not target.is_file():raise ValueError('Missing cookbook asset: '+path)
+     body=target.read_bytes();validate_png(body,size)
+     if asset_path(body)!=path:raise ValueError('Cookbook asset hash mismatch')
+   if clean['revision']!=self.cookbook['revision']:
+    tmp=self.cookbook_path.with_suffix('.tmp')
+    with tmp.open('w') as out:json.dump(clean,out);out.flush();os.fsync(out.fileno())
+    tmp.chmod(0o600);os.replace(tmp,self.cookbook_path);self.cookbook=clean
+   return {'ok':True,'revision':self.cookbook['revision'],'recipes':len(clean['recipes'])}
  def save(self):
   tmp=self.path.with_suffix('.tmp');tmp.write_text(json.dumps(self.state));tmp.chmod(0o600);os.replace(tmp,self.path)
  def push(self,payload):
@@ -84,26 +113,31 @@ def make_handler(store):
    if self.path=='/health':self.answer(200,{'ok':True});return
    if self.path=='/status':
     if not self.auth(True,allow_public=True):return
-    self.answer(200,{'last_poll':store.last_poll,'client':store.last_client,'revision':store.state['revision'],'recently_connected':time.time()-store.last_poll<15});return
+    self.answer(200,{'last_poll':store.last_poll,'client':store.last_client,'revision':store.state['revision'],'cookbook_revision':store.cookbook['revision'],'recently_connected':time.time()-store.last_poll<15});return
    if not self.auth():return
    if self.path=='/state':
     with store.lock:
      store.last_poll=time.time();store.last_client=self.client_address[0];self.answer(200,store.state)
-   elif re.fullmatch(r'/media/[a-f0-9]{64}\.(png|jpg|webp)',self.path):
-    p=store.media/self.path.split('/')[-1]
+   elif self.path=='/cookbook':
+    with store.lock:self.answer(200,store.cookbook)
+   elif re.fullmatch(r'/media/[a-f0-9]{64}\.(png|jpg|webp)',self.path) or re.fullmatch(ASSET_RE,self.path):
+    p=(store.cookbook_media if self.path.startswith('/cookbook/') else store.media)/self.path.split('/')[-1]
     if not p.is_file():self.answer(404,{'error':'Not found'});return
     body=p.read_bytes();self.send_response(200);self.send_header('Content-Type',mimetypes.guess_type(p.name)[0]);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
    else:self.answer(404,{'error':'Not found'})
   def do_POST(self):
-   if self.path!='/push':self.answer(404,{'error':'Not found'});return
+   if self.path not in ('/push','/cookbook/assets','/cookbook/import'):self.answer(404,{'error':'Not found'});return
    if not self.auth(True,allow_public=True):return
    try:
     n=int(self.headers.get('Content-Length','0'))
-    if not 0<n<=12*1024*1024:self.answer(413,{'error':'Payload size must be between 1 byte and 12 MiB'});return
+    limit=512*1024 if self.path=='/cookbook/import' else (2*1024*1024+1024 if self.path=='/cookbook/assets' else 12*1024*1024)
+    if not 0<n<=limit:self.answer(413,{'error':'Payload size exceeds endpoint limit'});return
     self.connection.settimeout(10)
     payload=json.loads(self.rfile.read(n))
-    self.answer(200,store.push(payload))
+    operation={'/push':store.push,'/cookbook/assets':store.upload_cookbook_asset,'/cookbook/import':store.import_cookbook}[self.path]
+    self.answer(200,operation(payload))
    except (ValueError,TypeError,KeyError) as e:self.answer(400,{'error':str(e)})
+   except OSError:self.answer(500,{'error':'Storage unavailable; inspect deck state before retrying' if self.path=='/push' else 'Storage unavailable; cookbook index was not replaced'})
   def auth_delete(self):
    if self.client_address[0] not in ('127.0.0.1','::1'):
     self.answer(403,{'error':'Delete requests must originate on this Mac'});return False
